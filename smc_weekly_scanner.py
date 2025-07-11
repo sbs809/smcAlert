@@ -65,6 +65,7 @@ def calculate_smc_signals(ticker):
         return None
 
 def run_weekly_smc_scan():
+    send_telegram_message("⏰ Weekly SMC scan started... checking Nifty 200 stocks.")
     nifty_200 = [
         "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "HINDUNILVR.NS",
         "KOTAKBANK.NS", "SBIN.NS", "LT.NS", "AXISBANK.NS", "ITC.NS", "BHARTIARTL.NS",
