@@ -4,16 +4,25 @@ import pandas as pd
 import pandas_ta as ta
 import requests
 from concurrent.futures import ThreadPoolExecutor
+import re
 
+# Get Telegram credentials from environment variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Escape special characters for Telegram MarkdownV2
+def escape_markdown(text):
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', str(text))
+
+# Send message to Telegram
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    safe_message = escape_markdown(message)
     data = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
+        "text": safe_message,
+        "parse_mode": "MarkdownV2"
     }
     try:
         response = requests.post(url, json=data)
@@ -22,6 +31,7 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"⚠️ Error sending Telegram message: {e}")
 
+# Main SMC signal logic
 def calculate_smc_signals(ticker):
     try:
         df = yf.download(ticker + ".NS", period="6mo", interval="1wk")
@@ -70,15 +80,15 @@ def calculate_smc_signals(ticker):
             return f"📈 *BUY Signal*: {ticker}.NS\nSL: ₹{last['SL']:.2f} | TP: ₹{last['TP']:.2f}"
         return None
     except Exception as e:
-        print(f"❌ Error processing {ticker}: {e}")
+        print(f"⚠️ Error processing {ticker}: {e}")
         return None
 
+# Main scan
 def run_weekly_smc_scan():
     send_telegram_message("⏰ Weekly SMC scan started... checking Nifty 200 stocks.")
-
     try:
         df_symbols = pd.read_csv("nifty200_symbols.csv")
-        tickers = df_symbols["Symbol"].tolist()
+        tickers = df_symbols["Symbol"].dropna().tolist()
     except Exception as e:
         send_telegram_message(f"⚠️ Failed to fetch Nifty 200 symbols: {e}")
         return
@@ -89,19 +99,15 @@ def run_weekly_smc_scan():
         signal = calculate_smc_signals(ticker)
         if signal:
             messages.append(signal)
-            print(f"✅ Signal for {ticker}")
-        else:
-            print(f"➖ No signal for {ticker}")
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         executor.map(process, tickers)
 
-    # ✅ Final guaranteed message
     if messages:
-        final_message = "*✅ Weekly SMC BUY Signals (RR 1:4)*\n\n" + "\n\n".join(messages)
+        final_message = "*Weekly SMC BUY Signals (RR 1:4)*\n\n" + "\n\n".join(messages)
         send_telegram_message(final_message)
     else:
-        send_telegram_message("📭 No SMC BUY signals found this week. (Scan complete ✅)")
+        send_telegram_message("📭 No SMC BUY signals found this week.")
 
 if __name__ == "__main__":
     run_weekly_smc_scan()
