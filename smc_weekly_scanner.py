@@ -1,70 +1,72 @@
 import os
-import yfinance as yf
 import pandas as pd
+from nsepy import get_history
+from datetime import date, timedelta
 import pandas_ta as ta
 import requests
 from concurrent.futures import ThreadPoolExecutor
-import re
 
-# Get Telegram credentials from environment variables
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Escape special characters for Telegram MarkdownV2
-def escape_markdown(text):
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', str(text))
 
-# Send message to Telegram
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    safe_message = escape_markdown(message)
-    data = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": safe_message,
-        "parse_mode": "MarkdownV2"
-    }
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        response = requests.post(url, json=data)
-        if not response.ok:
-            print(f"⚠️ Telegram send failed: {response.text}")
+        requests.post(url, json=data)
     except Exception as e:
-        print(f"⚠️ Error sending Telegram message: {e}")
+        print(f"⚠️ Telegram send failed: {e}")
 
-# Main SMC signal logic
+
 def calculate_smc_signals(ticker):
     try:
-        df = yf.download(ticker + ".NS", period="6mo", interval="1wk")
-        df_daily = yf.download(ticker + ".NS", period="1mo", interval="1d")
-        if df.empty or df_daily.empty or len(df) < 5:
+        end = date.today()
+        start = end - timedelta(days=180)
+        daily = get_history(symbol=ticker, start=start, end=end)
+        
+        if daily.empty or len(daily) < 20:
             return None
 
-        df["engulfing"] = (
-            (df["Close"] > df["Open"]) &
-            (df["Close"].shift(1) < df["Open"].shift(1)) &
-            (df["Close"] > df["Open"].shift(1)) &
-            (df["Open"] < df["Close"].shift(1))
+        weekly = daily.resample('W-FRI').agg({
+            'Open': 'first',
+            'High': 'max',
+            'Low': 'min',
+            'Close': 'last',
+            'Volume': 'sum'
+        }).dropna()
+
+        if weekly.empty or len(weekly) < 5:
+            return None
+
+        weekly["engulfing"] = (
+            (weekly["Close"] > weekly["Open"]) &
+            (weekly["Close"].shift(1) < weekly["Open"].shift(1)) &
+            (weekly["Close"] > weekly["Open"].shift(1)) &
+            (weekly["Open"] < weekly["Close"].shift(1))
         )
-        df["volSpike"] = df["Volume"] > df["Volume"].rolling(20).mean() * 1.5
-        adx = ta.adx(df["High"], df["Low"], df["Close"], length=14)
-        df["adx"] = adx["ADX_14"]
-        df["trendFilter"] = df["adx"] > 20
-        df["ATR"] = ta.atr(df["High"], df["Low"], df["Close"], length=14)
-        df["SL"] = df["Low"] - df["ATR"]
-        df["TP"] = df["Close"] + df["ATR"] * 4
 
-        df["swingHigh"] = (df["High"] > df["High"].shift(1)) & (df["High"] > df["High"].shift(2))
-        df["bosBull"] = df["swingHigh"] & (df["Close"] > df["High"].shift(1))
-        df["fvgBull"] = (df["Low"].shift(2) > df["High"]) & (df["Low"].shift(1) > df["High"])
-        df["bullOB"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["Open"])
-        df["liqGrabBull"] = (df["Low"] < df["Low"].shift(1)) & (df["Close"] > df["Open"])
-        df["breakerBlock"] = (df["Close"].shift(2) < df["Open"].shift(2)) & (df["Close"].shift(1) > df["High"].shift(2))
-        df["inducementZone"] = (df["Low"].shift(1) < df["Low"].shift(2)) & (df["Low"] > df["Low"].shift(1))
+        weekly["volSpike"] = weekly["Volume"] > weekly["Volume"].rolling(20).mean() * 1.5
+        adx = ta.adx(weekly["High"], weekly["Low"], weekly["Close"], length=14)
+        weekly["adx"] = adx["ADX_14"]
+        weekly["trendFilter"] = weekly["adx"] > 20
 
-        daily_trend = df_daily["Close"] > df_daily["Close"].rolling(20).mean()
+        weekly["ATR"] = ta.atr(weekly["High"], weekly["Low"], weekly["Close"], length=14)
+        weekly["SL"] = weekly["Low"] - weekly["ATR"]
+        weekly["TP"] = weekly["Close"] + weekly["ATR"] * 4
+
+        weekly["swingHigh"] = (weekly["High"] > weekly["High"].shift(1)) & (weekly["High"] > weekly["High"].shift(2))
+        weekly["bosBull"] = weekly["swingHigh"] & (weekly["Close"] > weekly["High"].shift(1))
+        weekly["fvgBull"] = (weekly["Low"].shift(2) > weekly["High"]) & (weekly["Low"].shift(1) > weekly["High"])
+        weekly["bullOB"] = (weekly["Close"].shift(1) < weekly["Open"].shift(1)) & (weekly["Close"] > weekly["Open"])
+        weekly["liqGrabBull"] = (weekly["Low"] < weekly["Low"].shift(1)) & (weekly["Close"] > weekly["Open"])
+        weekly["breakerBlock"] = (weekly["Close"].shift(2) < weekly["Open"].shift(2)) & (weekly["Close"].shift(1) > weekly["High"].shift(2))
+        weekly["inducementZone"] = (weekly["Low"].shift(1) < weekly["Low"].shift(2)) & (weekly["Low"] > weekly["Low"].shift(1))
+
+        daily_trend = daily["Close"] > daily["Close"].rolling(20).mean()
         daily_trend_bull = daily_trend.iloc[-1]
 
-        last = df.iloc[-1]
+        last = weekly.iloc[-1]
         if all([
             last["engulfing"],
             last["volSpike"],
@@ -77,24 +79,19 @@ def calculate_smc_signals(ticker):
             last["inducementZone"],
             daily_trend_bull
         ]):
-            return f"📈 *BUY Signal*: {ticker}.NS\nSL: ₹{last['SL']:.2f} | TP: ₹{last['TP']:.2f}"
+            return f"📈 *BUY Signal*: {ticker}\nSL: ₹{last['SL']:.2f} | TP: ₹{last['TP']:.2f}"
         return None
     except Exception as e:
         print(f"⚠️ Error processing {ticker}: {e}")
         return None
 
-# Main scan
+
 def run_weekly_smc_scan():
     send_telegram_message("⏰ Weekly SMC scan started... checking Nifty 200 stocks.")
-    try:
-        df_symbols = pd.read_csv("nifty200_symbols.csv")
-        tickers = df_symbols["Symbol"].dropna().tolist()
-    except Exception as e:
-        send_telegram_message(f"⚠️ Failed to fetch Nifty 200 symbols: {e}")
-        return
+    df_symbols = pd.read_csv("nifty200_symbols.csv")
+    tickers = df_symbols["Symbol"].tolist()
 
     messages = []
-
     def process(ticker):
         signal = calculate_smc_signals(ticker)
         if signal:
@@ -108,6 +105,7 @@ def run_weekly_smc_scan():
         send_telegram_message(final_message)
     else:
         send_telegram_message("📭 No SMC BUY signals found this week.")
+
 
 if __name__ == "__main__":
     run_weekly_smc_scan()
