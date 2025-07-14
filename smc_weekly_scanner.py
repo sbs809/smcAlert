@@ -3,8 +3,6 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import requests
-import csv
-from io import StringIO
 from concurrent.futures import ThreadPoolExecutor
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -12,30 +10,22 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    data = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown"
+    }
     try:
-        requests.post(url, json=data)
+        response = requests.post(url, json=data)
+        if not response.ok:
+            print(f"⚠️ Telegram send failed: {response.text}")
     except Exception as e:
-        print(f"Failed to send Telegram message: {e}")
-
-def get_nifty200_symbols():
-    url = "https://www1.nseindia.com/content/indices/ind_nifty200list.csv"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        resp.raise_for_status()
-        content = StringIO(resp.text)
-        reader = csv.DictReader(content)
-        symbols = [row["Symbol"].strip() for row in reader if "Symbol" in row]
-        return symbols
-    except Exception as e:
-        send_telegram_message(f"⚠️ Failed to fetch Nifty 200 symbols: {e}")
-        return []
+        print(f"⚠️ Error sending Telegram message: {e}")
 
 def calculate_smc_signals(ticker):
     try:
-        df = yf.download(ticker + ".NS", period="6mo", interval="1wk", progress=False)
-        df_daily = yf.download(ticker + ".NS", period="1mo", interval="1d", progress=False)
+        df = yf.download(ticker + ".NS", period="6mo", interval="1wk")
+        df_daily = yf.download(ticker + ".NS", period="1mo", interval="1d")
         if df.empty or df_daily.empty or len(df) < 5:
             return None
 
@@ -79,13 +69,18 @@ def calculate_smc_signals(ticker):
         ]):
             return f"📈 *BUY Signal*: {ticker}.NS\nSL: ₹{last['SL']:.2f} | TP: ₹{last['TP']:.2f}"
         return None
-    except Exception:
+    except Exception as e:
+        print(f"❌ Error processing {ticker}: {e}")
         return None
 
 def run_weekly_smc_scan():
     send_telegram_message("⏰ Weekly SMC scan started... checking Nifty 200 stocks.")
-    tickers = get_nifty200_symbols()
-    if not tickers:
+
+    try:
+        df_symbols = pd.read_csv("nifty200_symbols.csv")
+        tickers = df_symbols["Symbol"].tolist()
+    except Exception as e:
+        send_telegram_message(f"⚠️ Failed to fetch Nifty 200 symbols: {e}")
         return
 
     messages = []
@@ -94,15 +89,19 @@ def run_weekly_smc_scan():
         signal = calculate_smc_signals(ticker)
         if signal:
             messages.append(signal)
+            print(f"✅ Signal for {ticker}")
+        else:
+            print(f"➖ No signal for {ticker}")
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         executor.map(process, tickers)
 
+    # ✅ Final guaranteed message
     if messages:
-        final_message = "*Weekly SMC BUY Signals (RR 1:4)*\n\n" + "\n\n".join(messages)
+        final_message = "*✅ Weekly SMC BUY Signals (RR 1:4)*\n\n" + "\n\n".join(messages)
         send_telegram_message(final_message)
     else:
-        send_telegram_message("📭 No SMC BUY signals found this week.")
+        send_telegram_message("📭 No SMC BUY signals found this week. (Scan complete ✅)")
 
 if __name__ == "__main__":
     run_weekly_smc_scan()
