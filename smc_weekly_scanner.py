@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import requests
+import csv
 from io import StringIO
 from concurrent.futures import ThreadPoolExecutor
 
@@ -12,7 +13,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
-    requests.post(url, json=data)
+    try:
+        requests.post(url, json=data)
+    except Exception as e:
+        print(f"Failed to send Telegram message: {e}")
 
 def get_nifty200_symbols():
     url = "https://www1.nseindia.com/content/indices/ind_nifty200list.csv"
@@ -20,16 +24,18 @@ def get_nifty200_symbols():
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
-        df = pd.read_csv(StringIO(resp.text))
-        return df["Symbol"].dropna().astype(str).str.strip().tolist()
+        content = StringIO(resp.text)
+        reader = csv.DictReader(content)
+        symbols = [row["Symbol"].strip() for row in reader if "Symbol" in row]
+        return symbols
     except Exception as e:
         send_telegram_message(f"⚠️ Failed to fetch Nifty 200 symbols: {e}")
         return []
 
 def calculate_smc_signals(ticker):
     try:
-        df = yf.download(ticker + ".NS", period="6mo", interval="1wk")
-        df_daily = yf.download(ticker + ".NS", period="1mo", interval="1d")
+        df = yf.download(ticker + ".NS", period="6mo", interval="1wk", progress=False)
+        df_daily = yf.download(ticker + ".NS", period="1mo", interval="1d", progress=False)
         if df.empty or df_daily.empty or len(df) < 5:
             return None
 
@@ -77,16 +83,19 @@ def calculate_smc_signals(ticker):
         return None
 
 def run_weekly_smc_scan():
-    send_telegram_message("⏰ Weekly SMC scan started... fetching Nifty 200...")
+    send_telegram_message("⏰ Weekly SMC scan started... checking Nifty 200 stocks.")
     tickers = get_nifty200_symbols()
+    if not tickers:
+        return
 
     messages = []
+
     def process(ticker):
         signal = calculate_smc_signals(ticker)
         if signal:
             messages.append(signal)
 
-    with ThreadPoolExecutor(max_workers=15) as executor:
+    with ThreadPoolExecutor(max_workers=10) as executor:
         executor.map(process, tickers)
 
     if messages:
