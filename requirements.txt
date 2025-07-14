@@ -4,3 +4,4 @@ pandas_ta==0.3.14b
 schedule==1.2.1
 requests==2.31.0
 nsepy
+numpy==1.24.4
