@@ -21,7 +21,12 @@ def calculate_smc_signals(ticker):
         if df.empty or df_daily.empty or len(df) < 5:
             return None
 
-        df["engulfing"] = (df["Close"] > df["Open"]) &                           (df["Close"].shift(1) < df["Open"].shift(1)) &                           (df["Close"] > df["Open"].shift(1)) &                           (df["Open"] < df["Close"].shift(1))
+        df["engulfing"] = (
+            (df["Close"] > df["Open"]) &
+            (df["Close"].shift(1) < df["Open"].shift(1)) &
+            (df["Close"] > df["Open"].shift(1)) &
+            (df["Open"] < df["Close"].shift(1))
+        )
 
         df["volSpike"] = df["Volume"] > df["Volume"].rolling(20).mean() * 1.5
 
@@ -39,7 +44,10 @@ def calculate_smc_signals(ticker):
         df["bullOB"] = (df["Close"].shift(1) < df["Open"].shift(1)) & (df["Close"] > df["Open"])
         df["liqGrabBull"] = (df["Low"] < df["Low"].shift(1)) & (df["Close"] > df["Open"])
 
-        df["breakerBlock"] = (df["Close"].shift(2) < df["Open"].shift(2)) &                              (df["Close"].shift(1) > df["High"].shift(2))
+        df["breakerBlock"] = (
+            (df["Close"].shift(2) < df["Open"].shift(2)) &
+            (df["Close"].shift(1) > df["High"].shift(2))
+        )
 
         df["inducementZone"] = (df["Low"].shift(1) < df["Low"].shift(2)) & (df["Low"] > df["Low"].shift(1))
 
@@ -65,7 +73,8 @@ def calculate_smc_signals(ticker):
         return None
 
 def run_weekly_smc_scan():
-	send_telegram_message("⏰ Weekly SMC scan started... checking Nifty 200 stocks.")
+    send_telegram_message("⏰ Weekly SMC scan started... checking Nifty 200 stocks.")
+
     nifty_200 = [
         "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", "HINDUNILVR.NS",
         "KOTAKBANK.NS", "SBIN.NS", "LT.NS", "AXISBANK.NS", "ITC.NS", "BHARTIARTL.NS",
